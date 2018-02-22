@@ -1469,7 +1469,11 @@ int clock_poll(struct clock *c)
 	LIST_FOREACH(p, &c->ports, list) {
 		/* Let the ports handle their events. */
 		for (i = 0; i < N_POLLFD; i++) {
-			if (cur[i].revents & (POLLIN|POLLPRI)) {
+			if (cur[i].revents & (POLLERR)) {
+				int len = 0;
+				(void) recv(cur[i].fd, &len, sizeof(len), MSG_ERRQUEUE);
+				pr_notice("Handled err event from tx poll tmo");
+			} else if (cur[i].revents & (POLLIN|POLLPRI)) {
 				event = port_event(p, i);
 				if (EV_STATE_DECISION_EVENT == event)
 					c->sde = 1;
