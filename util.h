@@ -24,6 +24,7 @@
 
 #include "ddt.h"
 #include "ether.h"
+#include "stdbool.h"
 
 /**
  * Table of human readable strings, one for each port state.
@@ -34,6 +35,34 @@ extern const char *ps_str[];
  * Table of human readable strings, one for each port event.
  */
 extern const char *ev_str[];
+
+/**
+ * Counts the number of occurrences of a given character.
+ * @param str  String to evaluate.
+ * @param c    The character of interest.
+ * @return     The number of time 'c' appears in 'str'.
+ */
+int count_char(const char *str, char c);
+
+/**
+ * Convert an ip address into a human readable string.
+ *
+ * Note that this function uses a static global variable to store the
+ * result and therefore is not reentrant.
+ *
+ * @param address The input ip address to convert.
+ * @param ipv6    Variable holding the information about ip address type (true if ipv6 type)
+ * @return        Pointer to a static global buffer holding the result.
+ */
+char *ip2str(unsigned char *address, bool ipv6);
+
+/**
+ * Convert a string containing a MAC address into a human readable string.
+ *
+ * @param address The input MAC address to convert.
+ * @return        Pointer to a static global buffer holding the result.
+ */
+char *mac2str(unsigned char *address);
 
 /**
  * Convert a clock identity into a human readable string.
@@ -47,14 +76,6 @@ extern const char *ev_str[];
 char *cid2str(struct ClockIdentity *id);
 
 /**
- * Counts the number of occurrences of a given character.
- * @param str  String to evaluate.
- * @param c    The character of interest.
- * @return     The number of time 'c' appears in 'str'.
- */
-int count_char(const char *str, char c);
-
-/**
  * Convert a port identity into a human readable string.
  *
  * Note that this function uses a static global variable to store the
@@ -66,6 +87,16 @@ int count_char(const char *str, char c);
 char *pid2str(struct PortIdentity *id);
 
 /**
+ * Scan a string containing an ip address into binary form.
+ *
+ * @param s    String in human readable form.
+ * @param ip   Pointer to a buffer to hold the result.
+ * @param ipv6 Variable holding the information about ip address type (true if ipv6 type)
+ * @return     Zero on success, or -1 if the string is incorrectly formatted.
+ */
+int str2ip(const char *s, unsigned char *ip, bool ipv6);
+
+/**
  * Scan a string containing a MAC address and convert it into binary form.
  *
  * @param s       String in human readable form.
@@ -73,6 +104,15 @@ char *pid2str(struct PortIdentity *id);
  * @return Zero on success, or -1 if the string is incorrectly formatted.
  */
 int str2mac(const char *s, unsigned char mac[MAC_LEN]);
+
+/**
+ * Scan a string containing a clock identity and convert it into binary form.
+ *
+ * @param s       String in human readable form.
+ * @param result  Pointer to a buffer to hold the result.
+ * @return Zero on success, or -1 if the string is incorrectly formatted.
+ */
+int str2cid(const char *s, struct ClockIdentity *result);
 
 /**
  * Scan a string containing a port identity and convert it into binary form.

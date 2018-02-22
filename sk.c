@@ -38,8 +38,8 @@
 
 /* globals */
 
-int sk_tx_timeout = 1;
-int sk_check_fupsync;
+int sk_tx_timeout;  /* Initialized by config hash table in ptp4l.c */
+int sk_check_fupsync;  /* Initialized by config hash table in ptp4l.c */
 
 /* private methods */
 
