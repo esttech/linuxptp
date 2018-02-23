@@ -68,16 +68,6 @@ const char *ev_str[] = {
 	"RS_PASSIVE",
 };
 
-char *cid2str(struct ClockIdentity *id)
-{
-	static char buf[64];
-	unsigned char *ptr = id->id;
-	snprintf(buf, sizeof(buf), "%02x%02x%02x.%02x%02x.%02x%02x%02x",
-		 ptr[0], ptr[1], ptr[2], ptr[3],
-		 ptr[4], ptr[5], ptr[6], ptr[7]);
-	return buf;
-}
-
 int count_char(const char *str, char c)
 {
 	int num = 0;
@@ -87,6 +77,37 @@ int count_char(const char *str, char c)
 			num++;
 	}
 	return num;
+}
+
+char *ip2str(unsigned char *address, bool ipv6)
+{
+	static char buf[64];
+	if (ipv6) {
+		snprintf(buf, sizeof(buf), "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
+		        address[0], address[1], address[2], address[3], address[4], address[5], address[6], address[7],
+		        address[8], address[9], address[10], address[11], address[12], address[13], address[14], address[15]);
+	} else {
+		snprintf(buf, sizeof(buf), "%02x.%02x.%02x.%02x", address[0], address[1], address[2], address[3]);
+	}
+	return buf;
+}
+
+char *mac2str(unsigned char *address)
+{
+	static char buf[64];
+	snprintf(buf, sizeof(buf), "%02x:%02x:%02x:%02x:%02x:%02x",
+	  address[0], address[1], address[2], address[3], address[4], address[5]);
+	return buf;
+}
+
+char *cid2str(struct ClockIdentity *id)
+{
+	static char buf[64];
+	unsigned char *ptr = id->id;
+	snprintf(buf, sizeof(buf), "%02x%02x%02x.%02x%02x.%02x%02x%02x",
+		 ptr[0], ptr[1], ptr[2], ptr[3],
+		 ptr[4], ptr[5], ptr[6], ptr[7]);
+	return buf;
 }
 
 char *pid2str(struct PortIdentity *id)
@@ -100,17 +121,50 @@ char *pid2str(struct PortIdentity *id)
 	return buf;
 }
 
+int str2ip(const char *s, unsigned char *ip, bool ipv6)
+{
+	int size = (ipv6) ? 16 : 4;
+	unsigned char buf[size];
+	int c;
+	if (ipv6) {
+		c = sscanf(s, "%02hhx%02hhx:%02hhx%02hhx:%02hhx%02hhx:%02hhx%02hhx:%02hhx%02hhx:%02hhx%02hhx:%02hhx%02hhx:%02hhx%02hhx",
+		          &buf[0], &buf[1], &buf[2], &buf[3], &buf[4], &buf[5], &buf[6], &buf[7], &buf[8],
+		          &buf[9], &buf[10], &buf[11], &buf[12], &buf[13], &buf[14], &buf[15]);
+	} else {
+		c = sscanf(s, "%02hhx.%02hhx.%02hhx.%02hhx", &buf[0], &buf[1], &buf[2], &buf[3]);
+	}
+
+	if (c != size)
+		return -1;
+	memcpy(ip, buf, size);
+	return 0;
+}
+
 int str2mac(const char *s, unsigned char mac[MAC_LEN])
 {
 	unsigned char buf[MAC_LEN];
 	int c;
 	c = sscanf(s, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
 		   &buf[0], &buf[1], &buf[2], &buf[3], &buf[4], &buf[5]);
-	if (c != MAC_LEN) {
+	if (c != MAC_LEN)
 		return -1;
-	}
 	memcpy(mac, buf, MAC_LEN);
 	return 0;
+}
+
+int str2cid(const char *s, struct ClockIdentity *result)
+{
+	struct ClockIdentity cid;
+	unsigned char *ptr = cid.id;
+	int c;
+	c = sscanf(s, " %02hhx%02hhx%02hhx.%02hhx%02hhx.%02hhx%02hhx%02hhx",
+		   &ptr[0], &ptr[1], &ptr[2], &ptr[3],
+		   &ptr[4], &ptr[5], &ptr[6], &ptr[7]);
+	if (c == 8) {
+		*result = cid;
+		return 0;
+	}
+	return -1;
 }
 
 int str2pid(const char *s, struct PortIdentity *result)
