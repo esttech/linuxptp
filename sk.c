@@ -38,7 +38,7 @@
 
 /* globals */
 
-int sk_tx_timeout = 1;
+int sk_tx_timeout;
 int sk_check_fupsync;
 
 /* private methods */
