@@ -86,7 +86,7 @@ struct port {
 	struct foreign_clock *best;
 	enum syfu_state syfu;
 	struct ptp_message *last_syncfup;
-	struct ptp_message *delay_req;
+	TAILQ_HEAD(delay_req, ptp_message) delay_req;
 	struct ptp_message *peer_delay_req;
 	struct ptp_message *peer_delay_resp;
 	struct ptp_message *peer_delay_fup;
@@ -125,6 +125,7 @@ struct port {
 	int                 follow_up_info;
 	int                 freq_est_interval;
 	int                 hybrid_e2e;
+	int                 match_transport_specific;
 	int                 min_neighbor_prop_delay;
 	int                 path_trace_enabled;
 	int                 rx_timestamp_offset;
@@ -141,6 +142,10 @@ struct port {
 
 #define NSEC2SEC 1000000000LL
 
+static void store_delay_req(struct port *p, struct ptp_message *m);
+static void flush_last_sync(struct port *p);
+static void flush_delay_req(struct port *p);
+static void flush_peer_delay(struct port *p);
 static int port_capable(struct port *p);
 static int port_is_ieee8021as(struct port *p);
 static void port_nrate_initialize(struct port *p);
@@ -641,7 +646,8 @@ static int port_ignore(struct port *p, struct ptp_message *m)
 	if (path_trace_ignore(p, m)) {
 		return 1;
 	}
-	if (msg_transport_specific(m) != p->transportSpecific) {
+	if (p->match_transport_specific &&
+	    msg_transport_specific(m) != p->transportSpecific) {
 		return 1;
 	}
 	if (pid_eq(&m->header.sourcePortIdentity, &p->portIdentity)) {
@@ -703,16 +709,16 @@ static const Octet profile_id_p2p[] = {0x00, 0x1B, 0x19, 0x00, 0x02, 0x00};
 static int port_management_fill_response(struct port *target,
 					 struct ptp_message *rsp, int id)
 {
-	int datalen = 0, respond = 0;
-	struct management_tlv *tlv;
-	struct management_tlv_datum *mtd;
-	struct portDS *pds;
-	struct port_ds_np *pdsnp;
-	struct port_properties_np *ppn;
-	struct clock_description *desc;
 	struct mgmt_clock_description *cd;
-	uint8_t *buf;
+	struct management_tlv_datum *mtd;
+	struct clock_description *desc;
+	struct port_properties_np *ppn;
+	struct management_tlv *tlv;
+	struct port_ds_np *pdsnp;
+	struct portDS *pds;
 	uint16_t u16;
+	uint8_t *buf;
+	int datalen;
 
 	tlv = (struct management_tlv *) rsp->management.suffix;
 	tlv->type = TLV_MANAGEMENT;
@@ -721,7 +727,6 @@ static int port_management_fill_response(struct port *target,
 	switch (id) {
 	case TLV_NULL_MANAGEMENT:
 		datalen = 0;
-		respond = 1;
 		break;
 	case TLV_CLOCK_DESCRIPTION:
 		cd = &rsp->last_tlv.cd;
@@ -782,7 +787,6 @@ static int port_management_fill_response(struct port *target,
 		}
 		buf += PROFILE_ID_LEN;
 		datalen = buf - tlv->data;
-		respond = 1;
 		break;
 	case TLV_PORT_DATA_SET:
 		pds = (struct portDS *) tlv->data;
@@ -805,31 +809,26 @@ static int port_management_fill_response(struct port *target,
 		pds->logMinPdelayReqInterval = target->logMinPdelayReqInterval;
 		pds->versionNumber           = target->versionNumber;
 		datalen = sizeof(*pds);
-		respond = 1;
 		break;
 	case TLV_LOG_ANNOUNCE_INTERVAL:
 		mtd = (struct management_tlv_datum *) tlv->data;
 		mtd->val = target->logAnnounceInterval;
 		datalen = sizeof(*mtd);
-		respond = 1;
 		break;
 	case TLV_ANNOUNCE_RECEIPT_TIMEOUT:
 		mtd = (struct management_tlv_datum *) tlv->data;
 		mtd->val = target->announceReceiptTimeout;
 		datalen = sizeof(*mtd);
-		respond = 1;
 		break;
 	case TLV_LOG_SYNC_INTERVAL:
 		mtd = (struct management_tlv_datum *) tlv->data;
 		mtd->val = target->logSyncInterval;
 		datalen = sizeof(*mtd);
-		respond = 1;
 		break;
 	case TLV_VERSION_NUMBER:
 		mtd = (struct management_tlv_datum *) tlv->data;
 		mtd->val = target->versionNumber;
 		datalen = sizeof(*mtd);
-		respond = 1;
 		break;
 	case TLV_DELAY_MECHANISM:
 		mtd = (struct management_tlv_datum *) tlv->data;
@@ -838,20 +837,17 @@ static int port_management_fill_response(struct port *target,
 		else
 			mtd->val = DM_E2E;
 		datalen = sizeof(*mtd);
-		respond = 1;
 		break;
 	case TLV_LOG_MIN_PDELAY_REQ_INTERVAL:
 		mtd = (struct management_tlv_datum *) tlv->data;
 		mtd->val = target->logMinPdelayReqInterval;
 		datalen = sizeof(*mtd);
-		respond = 1;
 		break;
 	case TLV_PORT_DATA_SET_NP:
 		pdsnp = (struct port_ds_np *) tlv->data;
 		pdsnp->neighborPropDelayThresh = target->neighborPropDelayThresh;
 		pdsnp->asCapable = target->asCapable;
 		datalen = sizeof(*pdsnp);
-		respond = 1;
 		break;
 	case TLV_PORT_PROPERTIES_NP:
 		ppn = (struct port_properties_np *)tlv->data;
@@ -863,19 +859,22 @@ static int port_management_fill_response(struct port *target,
 		ppn->timestamping = target->timestamping;
 		ptp_text_set(&ppn->interface, target->iface->ts_label);
 		datalen = sizeof(*ppn) + ppn->interface.length;
-		respond = 1;
 		break;
+	default:
+		/* The caller should *not* respond to this message. */
+		return 0;
 	}
-	if (respond) {
-		if (datalen % 2) {
-			tlv->data[datalen] = 0;
-			datalen++;
-		}
-		tlv->length = sizeof(tlv->id) + datalen;
-		rsp->header.messageLength += sizeof(*tlv) + datalen;
-		rsp->tlv_count = 1;
+
+	if (datalen % 2) {
+		tlv->data[datalen] = 0;
+		datalen++;
 	}
-	return respond;
+	tlv->length = sizeof(tlv->id) + datalen;
+	rsp->header.messageLength += sizeof(*tlv) + datalen;
+	rsp->tlv_count = 1;
+
+	/* The caller can respond to this message. */
+	return 1;
 }
 
 static int port_management_get_response(struct port *target,
@@ -929,7 +928,7 @@ static void port_nrate_calculate(struct port *p, tmv_t origin, tmv_t ingress)
 	 */
 	p->pdr_missing = 0;
 
-	if (!n->ingress1) {
+	if (tmv_is_zero(n->ingress1)) {
 		n->ingress1 = ingress;
 		n->origin1 = origin;
 		return;
@@ -938,7 +937,7 @@ static void port_nrate_calculate(struct port *p, tmv_t origin, tmv_t ingress)
 	if (n->count < n->max_count) {
 		return;
 	}
-	if (tmv_eq(ingress, n->ingress1)) {
+	if (tmv_cmp(ingress, n->ingress1) == 0) {
 		pr_warning("bad timestamps in nrate calculation");
 		return;
 	}
@@ -1059,10 +1058,7 @@ static void port_synchronize(struct port *p,
 		break;
 	case SERVO_JUMP:
 		port_dispatch(p, EV_SYNCHRONIZATION_FAULT, 0);
-		if (p->delay_req) {
-			msg_put(p->delay_req);
-			p->delay_req = NULL;
-		}
+		flush_delay_req(p);
 		if (p->peer_delay_req) {
 			msg_put(p->peer_delay_req);
 			p->peer_delay_req = NULL;
@@ -1223,12 +1219,14 @@ static int port_delay_request(struct port *p)
 		p->peer_delay_fup = NULL;
 	}
 
-	if (p->delayMechanism == DM_P2P)
+	if (p->delayMechanism == DM_P2P) {
 		return port_pdelay_request(p);
+	}
 
 	msg = msg_allocate();
-	if (!msg)
+	if (!msg) {
 		return -1;
+	}
 
 	msg->hwts.type = p->timestamping;
 
@@ -1257,10 +1255,8 @@ static int port_delay_request(struct port *p)
 		goto out;
 	}
 
-	if (p->delay_req)
-		msg_put(p->delay_req);
+	store_delay_req(p, msg);
 
-	p->delay_req = msg;
 	return 0;
 out:
 	msg_put(msg);
@@ -1413,6 +1409,25 @@ static int port_is_enabled(struct port *p)
 	return 1;
 }
 
+static void store_delay_req(struct port *p, struct ptp_message *m)
+{
+	struct ptp_message *tmp;
+	int num = 0;
+
+	TAILQ_INSERT_HEAD(&p->delay_req, m, list);
+
+	/* Keep the queue no longer than UINT8_MAX */
+	TAILQ_FOREACH(tmp, &p->delay_req, list) {
+		if (++num >= UINT8_MAX) {
+			break;
+		}
+	}
+	if (tmp) {
+		TAILQ_REMOVE(&p->delay_req, tmp, list);
+		msg_put(tmp);
+	}
+}
+
 static void flush_last_sync(struct port *p)
 {
 	if (p->syfu != SF_EMPTY) {
@@ -1423,9 +1438,10 @@ static void flush_last_sync(struct port *p)
 
 static void flush_delay_req(struct port *p)
 {
-	if (p->delay_req) {
-		msg_put(p->delay_req);
-		p->delay_req = NULL;
+	struct ptp_message *m;
+	while ((m = TAILQ_FIRST(&p->delay_req)) != NULL) {
+		TAILQ_REMOVE(&p->delay_req, m, list);
+		msg_put(m);
 	}
 }
 
@@ -1489,6 +1505,7 @@ static int port_initialize(struct port *p)
 	p->syncReceiptTimeout      = config_get_int(cfg, p->name, "syncReceiptTimeout");
 	p->transportSpecific       = config_get_int(cfg, p->name, "transportSpecific");
 	p->transportSpecific     <<= 4;
+	p->match_transport_specific = !config_get_int(cfg, p->name, "ignore_transport_specific");
 	p->logSyncInterval         = config_get_int(cfg, p->name, "logSyncInterval");
 	p->logMinPdelayReqInterval = config_get_int(cfg, p->name, "logMinPdelayReqInterval");
 	p->neighborPropDelayThresh = config_get_int(cfg, p->name, "neighborPropDelayThresh");
@@ -1680,32 +1697,44 @@ static int process_delay_req(struct port *p, struct ptp_message *m)
 
 static void process_delay_resp(struct port *p, struct ptp_message *m)
 {
-	struct delay_req_msg *req;
 	struct delay_resp_msg *rsp = &m->delay_resp;
+	struct ptp_message *req, *obs;
 	struct PortIdentity master;
 	tmv_t c3, t3, t4, t4c;
 
-	if (!p->delay_req)
-		return;
-
 	master = clock_parent_identity(p->clock);
-	req = &p->delay_req->delay_req;
 
-	if (p->state != PS_UNCALIBRATED && p->state != PS_SLAVE)
+	if (p->state != PS_UNCALIBRATED && p->state != PS_SLAVE) {
 		return;
-	if (!pid_eq(&rsp->requestingPortIdentity, &req->hdr.sourcePortIdentity))
+	}
+	if (!pid_eq(&master, &m->header.sourcePortIdentity)) {
 		return;
-	if (rsp->hdr.sequenceId != ntohs(req->hdr.sequenceId))
+	}
+	TAILQ_FOREACH(req, &p->delay_req, list) {
+		if (!pid_eq(&rsp->requestingPortIdentity, &req->delay_req.hdr.sourcePortIdentity)) {
+			return;
+		}
+		if (rsp->hdr.sequenceId == ntohs(req->delay_req.hdr.sequenceId)) {
+			break;
+		}
+	}
+	if (!req) {
 		return;
-	if (!pid_eq(&master, &m->header.sourcePortIdentity))
-		return;
+	}
 
 	c3 = correction_to_tmv(m->header.correction);
-	t3 = timespec_to_tmv(p->delay_req->hwts.ts);
+	t3 = timespec_to_tmv(req->hwts.ts);
 	t4 = timestamp_to_tmv(m->ts.pdu);
 	t4c = tmv_sub(t4, c3);
 
 	clock_path_delay(p->clock, t3, t4c);
+
+	while ((obs = TAILQ_NEXT(req, list)) != NULL) {
+		TAILQ_REMOVE(&p->delay_req, obs, list);
+		msg_put(obs);
+	}
+	TAILQ_REMOVE(&p->delay_req, req, list);
+	msg_put(req);
 
 	if (p->logMinDelayReqInterval == rsp->hdr.logMessageInterval) {
 		return;
@@ -2433,8 +2462,9 @@ int port_prepare_and_send(struct port *p, struct ptp_message *msg, int event)
 {
 	int cnt;
 
-	if (msg_pre_send(msg))
+	if (msg_pre_send(msg)) {
 		return -1;
+	}
 	if (msg->header.flagField[0] & UNICAST) {
 		cnt = transport_sendto(p->trp, &p->fda, event, msg);
 	} else {
