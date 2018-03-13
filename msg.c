@@ -354,7 +354,7 @@ int msg_post_recv(struct ptp_message *m, int cnt)
 		timestamp_post_recv(m, &m->sync.originTimestamp);
 		break;
 	case DELAY_REQ:
-		suffix = m->delay_req.suffix;
+		suffix =       m->delay_req.suffix;
 		break;
 	case PDELAY_REQ:
 		break;
