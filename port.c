@@ -1839,7 +1839,6 @@ static void process_delay_resp(struct port *p, struct ptp_message *m)
 	}
 
 	c3 = correction_to_tmv(m->header.correction);
-	t3 = p->delay_req->hwts.ts;
 	t3 = req->hwts.ts;
 	t4 = timestamp_to_tmv(m->ts.pdu);
 	t4c = tmv_sub(t4, c3);
