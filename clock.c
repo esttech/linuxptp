@@ -34,6 +34,7 @@
 #include "missing.h"
 #include "msg.h"
 #include "phc.h"
+#include "pm.h"
 #include "port.h"
 #include "servo.h"
 #include "stats.h"
@@ -123,6 +124,9 @@ struct clock {
 	struct clockcheck *sanity_check;
 	struct interface uds_interface;
 	LIST_HEAD(clock_subscribers_head, clock_subscriber) subscribers;
+	/* performance monitoring */
+	int performance_monitoring;
+	struct pm_clock_stats pm_stats;
 };
 
 struct clock the_clock;
@@ -134,6 +138,11 @@ static void clock_remove_port(struct clock *c, struct port *p);
 static int cid_eq(struct ClockIdentity *a, struct ClockIdentity *b)
 {
 	return 0 == memcmp(a, b, sizeof(*a));
+}
+
+int clock_performance_monitoring(struct clock *c)
+{
+	return c->performance_monitoring;
 }
 
 static void remove_subscriber(struct clock_subscriber *s)
@@ -262,6 +271,7 @@ void clock_send_notification(struct clock *c, struct ptp_message *msg,
 void clock_destroy(struct clock *c)
 {
 	struct port *p, *tmp;
+	int i;
 
 	clock_flush_subscriptions(c);
 	LIST_FOREACH_SAFE(p, &c->ports, list, tmp) {
@@ -277,6 +287,10 @@ void clock_destroy(struct clock *c)
 	stats_destroy(c->stats.offset);
 	stats_destroy(c->stats.freq);
 	stats_destroy(c->stats.delay);
+	for (i = 0; i < N_CLOCK_STATS; ++i) {
+		stats_series_destroy(c->pm_stats.qhour[i]);
+		stats_series_destroy(c->pm_stats.daily[i]);
+	}
 	if (c->sanity_check) {
 		clockcheck_destroy(c->sanity_check);
 	}
@@ -856,7 +870,7 @@ struct clock *clock_create(enum clock_type type, struct config *config,
 	char phc[32], *tmp;
 	struct interface *iface, *udsif = &c->uds_interface;
 	struct timespec ts;
-	int sfl;
+	int sfl, i;
 
 	clock_gettime(CLOCK_REALTIME, &ts);
 	srandom(ts.tv_sec ^ ts.tv_nsec);
@@ -1103,6 +1117,15 @@ struct clock *clock_create(enum clock_type type, struct config *config,
 		return NULL;
 	}
 
+	for (i = 0; i < N_CLOCK_STATS; ++i) {
+		c->pm_stats.qhour[i] = stats_series_create(PM_QHOUR_LEN);
+		c->pm_stats.daily[i] = stats_series_create(PM_DAILY_LEN);
+		if (!c->pm_stats.qhour[i] || c->pm_stats.daily[i]) {
+			pr_err("failed to create stats");
+			return NULL;
+		}
+	}
+
 	/* Create the UDS interface. */
 	c->uds_port = port_open(phc_index, timestamping, 0, udsif, c);
 	if (!c->uds_port) {
@@ -1125,6 +1148,13 @@ struct clock *clock_create(enum clock_type type, struct config *config,
 		port_dispatch(p, EV_INITIALIZE, 0);
 	}
 	port_dispatch(c->uds_port, EV_INITIALIZE, 0);
+
+	if (c->performance_monitoring) {
+		c->pm_stats.qhour_head[stats_series_get_index(c->pm_stats.qhour[0])]
+			.pm_time = ts.tv_sec;
+		c->pm_stats.daily_head[stats_series_get_index(c->pm_stats.daily[0])]
+			.pm_time = ts.tv_sec;
+	}
 
 	return c;
 }
@@ -1524,12 +1554,24 @@ int clock_poll(struct clock *c)
 
 void clock_path_delay(struct clock *c, tmv_t req, tmv_t rx)
 {
+	double pm;
+
 	tsproc_up_ts(c->tsproc, req, rx);
+	if (c->performance_monitoring) {
+		pm = tmv_dbl(tmv_sub(rx, req));
+		stats_series_add_value(c->pm_stats.qhour[SLAVE_MASTER_DELAY], pm);
+		stats_series_add_value(c->pm_stats.daily[SLAVE_MASTER_DELAY], pm);
+	}
 
 	if (tsproc_update_delay(c->tsproc, &c->path_delay))
 		return;
 
 	c->cur.meanPathDelay = tmv_to_TimeInterval(c->path_delay);
+	if (c->performance_monitoring) {
+		pm = tmv_dbl(c->path_delay);
+		stats_series_add_value(c->pm_stats.qhour[MEAN_PATH_DELAY], pm);
+		stats_series_add_value(c->pm_stats.daily[MEAN_PATH_DELAY], pm);
+	}
 
 	if (c->stats.delay)
 		stats_add_value(c->stats.delay, tmv_dbl(c->path_delay));
@@ -1595,12 +1637,17 @@ int clock_switch_phc(struct clock *c, int phc_index)
 
 enum servo_state clock_synchronize(struct clock *c, tmv_t ingress, tmv_t origin)
 {
-	double adj, weight;
+	double adj, weight, pm;
 	enum servo_state state = SERVO_UNLOCKED;
 
 	c->ingress_ts = ingress;
 
 	tsproc_down_ts(c->tsproc, origin, ingress);
+	if (c->performance_monitoring) {
+		pm = tmv_dbl(tmv_sub(ingress, origin));
+		stats_series_add_value(c->pm_stats.qhour[MASTER_SLAVE_DELAY], pm);
+		stats_series_add_value(c->pm_stats.daily[MASTER_SLAVE_DELAY], pm);
+	}
 
 	if (tsproc_update_offset(c->tsproc, &c->master_offset, &weight)) {
 		if (c->free_running) {
@@ -1615,6 +1662,11 @@ enum servo_state clock_synchronize(struct clock *c, tmv_t ingress, tmv_t origin)
 	}
 
 	c->cur.offsetFromMaster = tmv_to_TimeInterval(c->master_offset);
+	if (c->performance_monitoring) {
+		pm = tmv_dbl(c->master_offset);
+		stats_series_add_value(c->pm_stats.qhour[OFFSET_FROM_MASTER], pm);
+		stats_series_add_value(c->pm_stats.daily[OFFSET_FROM_MASTER], pm);
+	}
 
 	if (c->free_running) {
 		return clock_no_adjust(c, ingress, origin);
