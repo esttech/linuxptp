@@ -1120,7 +1120,7 @@ struct clock *clock_create(enum clock_type type, struct config *config,
 	for (i = 0; i < N_CLOCK_STATS; ++i) {
 		c->pm_stats.qhour[i] = stats_series_create(PM_QHOUR_LEN);
 		c->pm_stats.daily[i] = stats_series_create(PM_DAILY_LEN);
-		if (!c->pm_stats.qhour[i] || c->pm_stats.daily[i]) {
+		if (!c->pm_stats.qhour[i] || !c->pm_stats.daily[i]) {
 			pr_err("failed to create stats");
 			return NULL;
 		}

@@ -24,6 +24,7 @@
 #include "clock.h"
 #include "fsm.h"
 #include "msg.h"
+#include "pm.h"
 #include "tmv.h"
 
 #define NSEC2SEC 1000000000LL
@@ -120,6 +121,9 @@ struct port {
 	unsigned int        versionNumber; /*UInteger4*/
 	/* foreignMasterDS */
 	LIST_HEAD(fm, foreign_clock) foreign_masters;
+	/* performance monitoring */
+	struct pm_port_stats pm_stats;
+	struct pm_port_counters pm_counter;
 };
 
 #define portnum(p) (p->portIdentity.portNumber)
