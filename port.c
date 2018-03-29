@@ -329,6 +329,9 @@ static int add_foreign_master(struct port *p, struct ptp_message *m)
 	struct ptp_message *tmp;
 	int broke_threshold = 0, diff = 0;
 
+	count_series_update(p->pm_counter.qhour, ANNOUNCE_FOREIGN_MASTER_RX);
+	count_series_update(p->pm_counter.daily, ANNOUNCE_FOREIGN_MASTER_RX);
+
 	LIST_FOREACH(fc, &p->foreign_masters, list) {
 		if (msg_source_equal(m, fc)) {
 			break;
@@ -1238,6 +1241,10 @@ static int port_pdelay_request(struct port *p)
 		pr_err("port %hu: send peer delay request failed", portnum(p));
 		goto out;
 	}
+
+	count_series_update(p->pm_counter.qhour, PDELAY_REQ_TX);
+	count_series_update(p->pm_counter.daily, PDELAY_REQ_TX);
+
 	if (msg_sots_missing(msg)) {
 		pr_err("missing timestamp on transmitted peer delay request");
 		goto out;
@@ -1301,6 +1308,10 @@ int port_delay_request(struct port *p)
 		pr_err("port %hu: send delay request failed", portnum(p));
 		goto out;
 	}
+
+	count_series_update(p->pm_counter.qhour, DELAY_REQ_TX);
+	count_series_update(p->pm_counter.daily, DELAY_REQ_TX);
+
 	if (msg_sots_missing(msg)) {
 		pr_err("missing timestamp on transmitted delay request");
 		goto out;
@@ -1357,7 +1368,12 @@ static int port_tx_announce(struct port *p)
 	err = port_prepare_and_send(p, msg, TRANS_GENERAL);
 	if (err) {
 		pr_err("port %hu: send announce failed", portnum(p));
+		goto out;
 	}
+
+	count_series_update(p->pm_counter.qhour, ANNOUNCE_TX);
+	count_series_update(p->pm_counter.daily, ANNOUNCE_TX);
+out:
 	msg_put(msg);
 	return err;
 }
@@ -1423,6 +1439,10 @@ static int port_tx_sync(struct port *p, struct address *dst)
 		pr_err("port %hu: send sync failed", portnum(p));
 		goto out;
 	}
+
+	count_series_update(p->pm_counter.qhour, SYNC_TX);
+	count_series_update(p->pm_counter.daily, SYNC_TX);
+
 	if (p->timestamping == TS_ONESTEP || p->timestamping == TS_P2P1STEP) {
 		goto out;
 	} else if (msg_sots_missing(msg)) {
@@ -1460,7 +1480,11 @@ static int port_tx_sync(struct port *p, struct address *dst)
 	err = port_prepare_and_send(p, fup, TRANS_GENERAL);
 	if (err) {
 		pr_err("port %hu: send follow up failed", portnum(p));
+		goto out;
 	}
+
+	count_series_update(p->pm_counter.qhour, FOLLOWUP_TX);
+	count_series_update(p->pm_counter.daily, FOLLOWUP_TX);
 out:
 	msg_put(msg);
 	msg_put(fup);
@@ -1708,6 +1732,9 @@ int process_announce(struct port *p, struct ptp_message *m)
 		result = update_current_master(p, m);
 		break;
 	}
+
+	count_series_update(p->pm_counter.qhour, ANNOUNCE_RX);
+	count_series_update(p->pm_counter.daily, ANNOUNCE_RX);
 	return result;
 }
 
@@ -1725,6 +1752,11 @@ static int process_delay_req(struct port *p, struct ptp_message *m)
 	if (p->delayMechanism == DM_P2P) {
 		pr_warning("port %hu: delay request on P2P port", portnum(p));
 		return 0;
+	}
+
+	if (!nsm) {
+		count_series_update(p->pm_counter.qhour, DELAY_REQ_RX);
+		count_series_update(p->pm_counter.daily, DELAY_REQ_RX);
 	}
 
 	msg = msg_allocate();
@@ -1763,11 +1795,15 @@ static int process_delay_req(struct port *p, struct ptp_message *m)
 		pr_err("port %hu: send delay response failed", portnum(p));
 		goto out;
 	}
+
 	if (nsm) {
 		saved_seqnum_sync = p->seqnum.sync;
 		p->seqnum.sync = m->header.sequenceId;
 		err = port_tx_sync(p, &m->address);
 		p->seqnum.sync = saved_seqnum_sync;
+	} else {
+		count_series_update(p->pm_counter.qhour, DELAY_RESP_TX);
+		count_series_update(p->pm_counter.daily, DELAY_RESP_TX);
 	}
 out:
 	msg_put(msg);
@@ -1811,6 +1847,9 @@ static void process_delay_resp(struct port *p, struct ptp_message *m)
 	TAILQ_REMOVE(&p->delay_req, req, list);
 	msg_put(req);
 
+	count_series_update(p->pm_counter.qhour, DELAY_RESP_RX);
+	count_series_update(p->pm_counter.daily, DELAY_RESP_RX);
+
 	if (p->logMinDelayReqInterval == rsp->hdr.logMessageInterval) {
 		return;
 	}
@@ -1852,6 +1891,9 @@ void process_follow_up(struct port *p, struct ptp_message *m)
 	if (memcmp(&master, &m->header.sourcePortIdentity, sizeof(master))) {
 		return;
 	}
+
+	count_series_update(p->pm_counter.qhour, FOLLOWUP_RX);
+	count_series_update(p->pm_counter.daily, FOLLOWUP_RX);
 
 	if (p->follow_up_info) {
 		struct follow_up_info_tlv *fui = follow_up_info_extract(m);
@@ -1913,6 +1955,9 @@ int process_pdelay_req(struct port *p, struct ptp_message *m)
 			pid2str(&p->peer_portid));
 	}
 
+	count_series_update(p->pm_counter.qhour, PDELAY_REQ_RX);
+	count_series_update(p->pm_counter.daily, PDELAY_REQ_RX);
+
 	rsp = msg_allocate();
 	if (!rsp) {
 		return -1;
@@ -1961,6 +2006,9 @@ int process_pdelay_req(struct port *p, struct ptp_message *m)
 		goto out;
 	}
 
+	count_series_update(p->pm_counter.qhour, PDELAY_RESP_TX);
+	count_series_update(p->pm_counter.daily, PDELAY_RESP_TX);
+
 	/*
 	 * Send the follow up message right away.
 	 */
@@ -1984,7 +2032,11 @@ int process_pdelay_req(struct port *p, struct ptp_message *m)
 	err = peer_prepare_and_send(p, fup, 0);
 	if (err) {
 		pr_err("port %hu: send pdelay_resp_fup failed", portnum(p));
+		goto out;
 	}
+
+	count_series_update(p->pm_counter.qhour, PDELAY_RESP_FOLLOWUP_TX);
+	count_series_update(p->pm_counter.daily, PDELAY_RESP_FOLLOWUP_TX);
 out:
 	msg_put(rsp);
 	msg_put(fup);
@@ -1997,6 +2049,7 @@ static void port_peer_delay(struct port *p)
 	struct ptp_message *req = p->peer_delay_req;
 	struct ptp_message *rsp = p->peer_delay_resp;
 	struct ptp_message *fup = p->peer_delay_fup;
+	double pm;
 
 	/* Check for response, validate port and sequence number. */
 
@@ -2053,6 +2106,11 @@ calc:
 		return;
 
 	p->peerMeanPathDelay = tmv_to_TimeInterval(p->peer_delay);
+	if (clock_performance_monitoring(p->clock)) {
+		pm = tmv_dbl(p->peer_delay);
+		stats_series_add_value(p->pm_stats.qhour, pm);
+		stats_series_add_value(p->pm_stats.daily, pm);
+	}
 
 	if (p->state == PS_UNCALIBRATED || p->state == PS_SLAVE) {
 		clock_peer_delay(p->clock, p->peer_delay, t1, t2,
@@ -2098,6 +2156,9 @@ int process_pdelay_resp(struct port *p, struct ptp_message *m)
 			pid2str(&p->peer_portid));
 	}
 
+	count_series_update(p->pm_counter.qhour, PDELAY_RESP_RX);
+	count_series_update(p->pm_counter.daily, PDELAY_RESP_RX);
+
 	if (p->peer_delay_resp) {
 		msg_put(p->peer_delay_resp);
 	}
@@ -2112,6 +2173,9 @@ void process_pdelay_resp_fup(struct port *p, struct ptp_message *m)
 	if (!p->peer_delay_req) {
 		return;
 	}
+
+	count_series_update(p->pm_counter.qhour, PDELAY_RESP_FOLLOWUP_RX);
+	count_series_update(p->pm_counter.daily, PDELAY_RESP_FOLLOWUP_RX);
 
 	if (p->peer_delay_fup) {
 		msg_put(p->peer_delay_fup);
@@ -2150,6 +2214,9 @@ void process_sync(struct port *p, struct ptp_message *m)
 		clock_sync_interval(p->clock, p->log_sync_interval);
 	}
 
+	count_series_update(p->pm_counter.qhour, SYNC_RX);
+	count_series_update(p->pm_counter.daily, SYNC_RX);
+
 	m->header.correction += p->asymmetry;
 
 	if (one_step(m)) {
@@ -2186,6 +2253,10 @@ void port_close(struct port *p)
 	if (p->fault_fd >= 0) {
 		close(p->fault_fd);
 	}
+	stats_series_destroy(p->pm_stats.qhour);
+	stats_series_destroy(p->pm_stats.daily);
+	count_series_destroy(p->pm_counter.qhour);
+	count_series_destroy(p->pm_counter.daily);
 	free(p);
 }
 
@@ -2869,8 +2940,18 @@ struct port *port_open(int phc_index,
 			goto err_tsproc;
 		}
 	}
+	p->pm_stats.qhour = stats_series_create(PM_QHOUR_LEN);
+	p->pm_stats.daily = stats_series_create(PM_DAILY_LEN);
+	p->pm_counter.qhour = count_series_create(PM_QHOUR_LEN, N_MSG_COUNTERS);
+	p->pm_counter.daily = count_series_create(PM_DAILY_LEN, N_MSG_COUNTERS);
+	if (!p->pm_stats.qhour || !p->pm_counter.qhour ||
+	    !p->pm_stats.daily || !p->pm_counter.daily) {
+		pr_err("failed to create stats");
+		goto err_pmstats;
+	}
 	return p;
 
+err_pmstats:
 err_tsproc:
 	tsproc_destroy(p->tsproc);
 err_transport:

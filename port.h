@@ -24,6 +24,7 @@
 #include "foreign.h"
 #include "fsm.h"
 #include "notification.h"
+#include "pm.h"
 #include "transport.h"
 
 /* forward declarations */
