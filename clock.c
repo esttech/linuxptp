@@ -159,11 +159,16 @@ static int clock_clr_tmo(int fd)
 static void clock_pm_event(struct clock *c)
 {
 	struct timespec ts;
+	struct port *p;
 	int i;
 
 	clock_set_pm_tmo(c);
 	clock_gettime(CLOCK_REALTIME, &ts);
 	c->pm_stats.cycle_index++;
+
+	LIST_FOREACH(p, &c->ports, list) {
+		port_pm_event(p, c->pm_stats.cycle_index);
+	}
 
 	for (i = 0; i < N_CLOCK_STATS; i++) {
 		stats_series_advance(c->pm_stats.qhour[i]);

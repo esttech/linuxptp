@@ -56,6 +56,18 @@ static int port_capable(struct port *p);
 static int port_is_ieee8021as(struct port *p);
 static void port_nrate_initialize(struct port *p);
 
+
+void port_pm_event(struct port *p, int ci)
+{
+	stats_series_advance(p->pm_stats.qhour);
+	count_series_advance(p->pm_counter.qhour);
+
+	if (PM_QHOUR_DAY == ci) {
+		stats_series_advance(p->pm_stats.daily);
+		count_series_advance(p->pm_counter.daily);
+	}
+}
+
 static int announce_compare(struct ptp_message *m1, struct ptp_message *m2)
 {
 	struct announce_msg *a = &m1->announce, *b = &m2->announce;

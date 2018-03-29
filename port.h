@@ -35,6 +35,14 @@ struct clock;
 struct port;
 
 /**
+ * Updates the recordlist for the port.
+ *
+ * @param p       A port instance.
+ * @param ci      Cycle index for the pm.
+ */
+void port_pm_event(struct port *p, int ci);
+
+/**
  * Returns the dataset from a port's best foreign clock record, if any
  * has yet been discovered. This function does not bring the returned
  * dataset up to date, so the caller should invoke port_compute_best()
