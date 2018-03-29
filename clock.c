@@ -156,6 +156,32 @@ static int clock_clr_tmo(int fd)
 	return set_tmo_lin(fd, 0);
 }
 
+static void clock_pm_event(struct clock *c)
+{
+	struct timespec ts;
+	int i;
+
+	clock_set_pm_tmo(c);
+	clock_gettime(CLOCK_REALTIME, &ts);
+	c->pm_stats.cycle_index++;
+
+	for (i = 0; i < N_CLOCK_STATS; i++) {
+		stats_series_advance(c->pm_stats.qhour[i]);
+	}
+	c->pm_stats.qhour_head[stats_series_get_index(c->pm_stats.qhour[0])]
+	.pm_time = ts.tv_sec;
+
+	if (PM_QHOUR_DAY == c->pm_stats.cycle_index) {
+		for (i = 0; i < N_CLOCK_STATS; i++) {
+			stats_series_advance(c->pm_stats.daily[i]);
+		}
+		c->pm_stats.daily_head[stats_series_get_index(c->pm_stats.daily[0])]
+		.pm_time = ts.tv_sec;
+		c->pm_stats.cycle_index = 0;
+	}
+
+}
+
 static void remove_subscriber(struct clock_subscriber *s)
 {
 	LIST_REMOVE(s, list);
@@ -1170,9 +1196,9 @@ struct clock *clock_create(enum clock_type type, struct config *config,
 	if (c->performance_monitoring) {
 		clock_set_pm_tmo(c);
 		c->pm_stats.qhour_head[stats_series_get_index(c->pm_stats.qhour[0])]
-			.pm_time = ts.tv_sec;
+		.pm_time = ts.tv_sec;
 		c->pm_stats.daily_head[stats_series_get_index(c->pm_stats.daily[0])]
-			.pm_time = ts.tv_sec;
+		.pm_time = ts.tv_sec;
 	}
 
 	return c;
@@ -1575,7 +1601,7 @@ int clock_poll(struct clock *c)
 
 	/* Check the pm timer. */
 	if (cur[0].revents & (POLLIN|POLLPRI)) {
-		;
+		clock_pm_event(c);
 	}
 
 	if (c->sde) {
