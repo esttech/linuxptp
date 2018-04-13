@@ -22,6 +22,7 @@
 
 /** Opaque type */
 struct stats;
+struct stats_series;
 
 /**
  * Create a new instance of statistics.
@@ -31,7 +32,7 @@ struct stats *stats_create(void);
 
 /**
  * Destroy an instance of stats.
- * @param servo Pointer to stats obtained via @ref stats_create().
+ * @param stats Pointer to stats obtained via @ref stats_create().
  */
 void stats_destroy(struct stats *stats);
 
@@ -60,9 +61,9 @@ struct stats_result {
 
 /**
  * Obtain the results of the calculated statistics.
- * @param stats        Pointer to stats obtained via @ref stats_create().
- * @param stats_result Pointer to stats_result to store the results.
- * @return             Zero on success, non-zero if no values were added.
+ * @param stats  Pointer to stats obtained via @ref stats_create().
+ * @param result Pointer to stats_result to store the results.
+ * @return       Zero on success, non-zero if no values were added.
  */
 int stats_get_result(struct stats *stats, struct stats_result *result);
 
@@ -71,5 +72,46 @@ int stats_get_result(struct stats *stats, struct stats_result *result);
  * @param stats Pointer to stats obtained via @ref stats_create().
  */
 void stats_reset(struct stats *stats);
+
+/**
+ * Create a new instance of a statistic series.
+ * @param len Length of stats serie.
+ * @return    A pointer to a new stats_series on success, NULL otherwise.
+ */
+struct stats_series *stats_series_create(int len);
+
+/**
+ * Destroy an instance of stats_series.
+ * @param serie Pointer to stats_series obtained via @ref stats_series_create().
+ */
+void stats_series_destroy(struct stats_series *serie);
+
+/**
+ * Add a new value to the stats.
+ * @param serie Pointer to stats_series obtained via @ref stats_series_create().
+ * @param value The measured value.
+ */
+void stats_series_add_value(struct stats_series *serie, double value);
+
+/**
+ * Get current index in the serie.
+ * @param serie Pointer to stats_series obtained via @ref stats_series_create().
+ * @return      Current index in the serie.
+ */
+int stats_series_get_index(struct stats_series *serie);
+
+/**
+ * Obtain the results of the calculated statistics in a serie.
+ * @param serie  Pointer to stats_series obtained via @ref stats_series_create().
+ * @param result Pointer to stats_result array to store the results.
+ * @return       Zero on success, non-zero if no values were added.
+ */
+int stats_series_get_result(struct stats_series *serie, struct stats_result *result);
+
+/**
+ * Advance to next stats in series.
+ * @param serie Pointer to stats_series obtained via @ref stats_series_create().
+ */
+void stats_series_advance(struct stats_series *serie);
 
 #endif
