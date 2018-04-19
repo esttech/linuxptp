@@ -437,7 +437,6 @@ static int nsm_request(struct nsm *nsm, char *target)
 		goto out;
 	}
 	cnt = transport_sendto(nsm->trp, &nsm->fda, TRANS_EVENT, msg);
-
 	if (cnt <= 0) {
 		pr_err("transport_sendto failed");
 		err = -1;
@@ -577,8 +576,8 @@ int main(int argc, char *argv[])
 			if (optind < argc && !nsm->nsm_delay_req) {
 				cmd = argv[optind++];
 				if (nsm_command(nsm, cmd)) {
-						pr_err("command failed");
-						continue;
+					pr_err("command failed");
+					continue;
 				}
 			}
 			/* Wait a bit for any outstanding replies. */
@@ -596,7 +595,7 @@ int main(int argc, char *argv[])
 			}
 		} else if (!cnt && optind < argc) {
 			/* For batch mode. No response received from target node,
-			 * continue with next command.*/
+			 * continue with next command. */
 			nsm_reset(nsm);
 			continue;
 		} else if (!cnt) {
