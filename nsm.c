@@ -562,7 +562,6 @@ int main(int argc, char *argv[])
 	}
 
 	if (optind < argc) {
-		fprintf(stdout, "batch_mode");
 		batch_mode = 1;
 	}
 
