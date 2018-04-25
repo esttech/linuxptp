@@ -31,6 +31,13 @@ struct stats {
 	double sum_diff_sqr;
 };
 
+struct stats_series {
+	int length;
+	int index;
+	int count;
+	struct stats *instance[];
+};
+
 struct stats *stats_create(void)
 {
 	struct stats *stats;
@@ -66,8 +73,9 @@ unsigned int stats_get_num_values(struct stats *stats)
 
 int stats_get_result(struct stats *stats, struct stats_result *result)
 {
-	if (!stats->num)
+	if (!stats->num) {
 		return -1;
+	}
 
 	result->min = stats->min;
 	result->max = stats->max;
@@ -83,3 +91,70 @@ void stats_reset(struct stats *stats)
 {
 	memset(stats, 0, sizeof *stats);
 }
+
+struct stats_series *stats_series_create(int len)
+{
+	struct stats_series *serie;
+	int i;
+
+	serie = calloc(1, sizeof (*serie) + len * sizeof (struct stats*));
+	if (!serie) {
+		goto out;
+	}
+
+	serie->length = len;
+	for (i = 0; i < len; i++) {
+		serie->instance[i] = stats_create();
+		if (!serie->instance[i]) {
+			goto destroy;
+		}
+	}
+
+	return serie;
+destroy:
+	stats_series_destroy(serie);
+out:
+	return NULL;
+}
+
+void stats_series_destroy(struct stats_series *serie)
+{
+	int i;
+
+	for (i = 0; i < serie->length; ++i) {
+		stats_destroy(serie->instance[i]);
+	}
+	free(serie);
+}
+
+void stats_series_add_value(struct stats_series *serie, double value)
+{
+	stats_add_value(serie->instance[serie->index], value);
+}
+
+int stats_series_get_index(struct stats_series *serie)
+{
+	return serie->index;
+}
+
+int stats_series_get_result(struct stats_series *serie, struct stats_result *result)
+{
+	int i;
+	for (i = 0; i < serie->length && i < serie->count; ++i) {
+		if (stats_get_result(serie->instance[i], &result[i])) {
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
+void stats_series_advance(struct stats_series *serie)
+{
+	serie->index = (1 + serie->index) % serie->length;
+	stats_reset(serie->instance[serie->index]);
+	if (serie->count < serie->length) {
+		serie->count++;
+	}
+}
+

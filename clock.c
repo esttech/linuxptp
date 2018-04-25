@@ -34,6 +34,7 @@
 #include "missing.h"
 #include "msg.h"
 #include "phc.h"
+#include "pm.h"
 #include "port.h"
 #include "servo.h"
 #include "stats.h"
@@ -123,6 +124,10 @@ struct clock {
 	struct clockcheck *sanity_check;
 	struct interface uds_interface;
 	LIST_HEAD(clock_subscribers_head, clock_subscriber) subscribers;
+	/* performance monitoring */
+	int performance_monitoring;
+	int pm_fd;
+	struct pm_clock_stats pm_stats;
 };
 
 struct clock the_clock;
@@ -134,6 +139,52 @@ static void clock_remove_port(struct clock *c, struct port *p);
 static int cid_eq(struct ClockIdentity *a, struct ClockIdentity *b)
 {
 	return 0 == memcmp(a, b, sizeof(*a));
+}
+
+int clock_performance_monitoring(struct clock *c)
+{
+	return c->performance_monitoring;
+}
+
+static int clock_set_pm_tmo(struct clock *c)
+{
+	return set_tmo_lin(c->pm_fd, PM_15M_TIMER);
+}
+
+static int clock_clr_tmo(int fd)
+{
+	return set_tmo_lin(fd, 0);
+}
+
+static void clock_pm_event(struct clock *c)
+{
+	struct timespec ts;
+	struct port *p;
+	int i;
+
+	clock_set_pm_tmo(c);
+	clock_gettime(CLOCK_REALTIME, &ts);
+	c->pm_stats.cycle_index++;
+
+	LIST_FOREACH(p, &c->ports, list) {
+		port_pm_event(p, c->pm_stats.cycle_index);
+	}
+
+	for (i = 0; i < N_CLOCK_STATS; i++) {
+		stats_series_advance(c->pm_stats.qhour[i]);
+	}
+	c->pm_stats.qhour_head[stats_series_get_index(c->pm_stats.qhour[0])]
+	.pm_time = ts.tv_sec;
+
+	if (PM_QHOUR_DAY == c->pm_stats.cycle_index) {
+		for (i = 0; i < N_CLOCK_STATS; i++) {
+			stats_series_advance(c->pm_stats.daily[i]);
+		}
+		c->pm_stats.daily_head[stats_series_get_index(c->pm_stats.daily[0])]
+		.pm_time = ts.tv_sec;
+		c->pm_stats.cycle_index = 0;
+	}
+
 }
 
 static void remove_subscriber(struct clock_subscriber *s)
@@ -262,12 +313,15 @@ void clock_send_notification(struct clock *c, struct ptp_message *msg,
 void clock_destroy(struct clock *c)
 {
 	struct port *p, *tmp;
+	int i;
 
 	clock_flush_subscriptions(c);
 	LIST_FOREACH_SAFE(p, &c->ports, list, tmp) {
 		clock_remove_port(c, p);
 	}
 	port_close(c->uds_port);
+	clock_clr_tmo(c->pm_fd);
+	close(c->pm_fd);
 	free(c->pollfd);
 	if (c->clkid != CLOCK_REALTIME) {
 		phc_close(c->clkid);
@@ -277,6 +331,10 @@ void clock_destroy(struct clock *c)
 	stats_destroy(c->stats.offset);
 	stats_destroy(c->stats.freq);
 	stats_destroy(c->stats.delay);
+	for (i = 0; i < N_CLOCK_STATS; ++i) {
+		stats_series_destroy(c->pm_stats.qhour[i]);
+		stats_series_destroy(c->pm_stats.daily[i]);
+	}
 	if (c->sanity_check) {
 		clockcheck_destroy(c->sanity_check);
 	}
@@ -856,7 +914,7 @@ struct clock *clock_create(enum clock_type type, struct config *config,
 	char phc[32], *tmp;
 	struct interface *iface, *udsif = &c->uds_interface;
 	struct timespec ts;
-	int sfl;
+	int sfl, i;
 
 	clock_gettime(CLOCK_REALTIME, &ts);
 	srandom(ts.tv_sec ^ ts.tv_nsec);
@@ -1013,6 +1071,8 @@ struct clock *clock_create(enum clock_type type, struct config *config,
 	c->kernel_leap = config_get_int(config, NULL, "kernel_leap");
 	c->utc_offset = config_get_int(config, NULL, "utc_offset");
 	c->time_source = config_get_int(config, NULL, "timeSource");
+	c->performance_monitoring =
+		config_get_int(config, NULL, "performance_monitoring");
 
 	if (c->free_running) {
 		c->clkid = CLOCK_INVALID;
@@ -1103,6 +1163,20 @@ struct clock *clock_create(enum clock_type type, struct config *config,
 		return NULL;
 	}
 
+	c->pm_fd = timerfd_create(CLOCK_MONOTONIC, 0);
+	if (c->pm_fd < 0) {
+		pr_err("timerfd_create failed: %m");
+		return NULL;
+	}
+	for (i = 0; i < N_CLOCK_STATS; ++i) {
+		c->pm_stats.qhour[i] = stats_series_create(PM_QHOUR_LEN);
+		c->pm_stats.daily[i] = stats_series_create(PM_DAILY_LEN);
+		if (!c->pm_stats.qhour[i] || !c->pm_stats.daily[i]) {
+			pr_err("failed to create stats");
+			return NULL;
+		}
+	}
+
 	/* Create the UDS interface. */
 	c->uds_port = port_open(phc_index, timestamping, 0, udsif, c);
 	if (!c->uds_port) {
@@ -1125,6 +1199,14 @@ struct clock *clock_create(enum clock_type type, struct config *config,
 		port_dispatch(p, EV_INITIALIZE, 0);
 	}
 	port_dispatch(c->uds_port, EV_INITIALIZE, 0);
+
+	if (c->performance_monitoring) {
+		clock_set_pm_tmo(c);
+		c->pm_stats.qhour_head[stats_series_get_index(c->pm_stats.qhour[0])]
+		.pm_time = ts.tv_sec;
+		c->pm_stats.daily_head[stats_series_get_index(c->pm_stats.daily[0])]
+		.pm_time = ts.tv_sec;
+	}
 
 	return c;
 }
@@ -1190,9 +1272,10 @@ static int clock_resize_pollfd(struct clock *c, int new_nports)
 {
 	struct pollfd *new_pollfd;
 
-	/* Need to allocate one whole extra block of fds for UDS. */
+	/* Need to allocate one extra fd for pm and one whole extra block
+	 * of fds for UDS. */
 	new_pollfd = realloc(c->pollfd,
-			     (new_nports + 1) * N_CLOCK_PFD *
+			     (1 + (new_nports + 1) * N_CLOCK_PFD) *
 			     sizeof(struct pollfd));
 	if (!new_pollfd) {
 		return -1;
@@ -1201,7 +1284,7 @@ static int clock_resize_pollfd(struct clock *c, int new_nports)
 	return 0;
 }
 
-static void clock_fill_pollfd(struct pollfd *dest, struct port *p)
+static void clock_fill_port_pollfd(struct pollfd *dest, struct port *p)
 {
 	struct fdarray *fda;
 	int i;
@@ -1215,6 +1298,12 @@ static void clock_fill_pollfd(struct pollfd *dest, struct port *p)
 	dest[i].events = POLLIN|POLLPRI;
 }
 
+static void clock_fill_pm_pollfd(struct pollfd *dest, struct clock *c)
+{
+	dest[0].fd = c->pm_fd;
+	dest[0].events = POLLIN|POLLPRI;
+}
+
 static void clock_check_pollfd(struct clock *c)
 {
 	struct port *p;
@@ -1224,10 +1313,12 @@ static void clock_check_pollfd(struct clock *c)
 		return;
 	}
 	LIST_FOREACH(p, &c->ports, list) {
-		clock_fill_pollfd(dest, p);
+		clock_fill_port_pollfd(dest, p);
 		dest += N_CLOCK_PFD;
 	}
-	clock_fill_pollfd(dest, c->uds_port);
+	clock_fill_port_pollfd(dest, c->uds_port);
+	dest += N_CLOCK_PFD;
+	clock_fill_pm_pollfd(dest, c);
 	c->pollfd_valid = 1;
 }
 
@@ -1456,7 +1547,7 @@ int clock_poll(struct clock *c)
 	struct port *p;
 
 	clock_check_pollfd(c);
-	cnt = poll(c->pollfd, (c->nports + 1) * N_CLOCK_PFD, -1);
+	cnt = poll(c->pollfd, 1 + (c->nports + 1) * N_CLOCK_PFD, -1);
 	if (cnt < 0) {
 		if (EINTR == errno) {
 			return 0;
@@ -1513,6 +1604,12 @@ int clock_poll(struct clock *c)
 			}
 		}
 	}
+	cur += N_CLOCK_PFD;
+
+	/* Check the pm timer. */
+	if (cur[0].revents & (POLLIN|POLLPRI)) {
+		clock_pm_event(c);
+	}
 
 	if (c->sde) {
 		handle_state_decision_event(c);
@@ -1524,12 +1621,24 @@ int clock_poll(struct clock *c)
 
 void clock_path_delay(struct clock *c, tmv_t req, tmv_t rx)
 {
+	double pm;
+
 	tsproc_up_ts(c->tsproc, req, rx);
+	if (c->performance_monitoring) {
+		pm = tmv_dbl(tmv_sub(rx, req));
+		stats_series_add_value(c->pm_stats.qhour[SLAVE_MASTER_DELAY], pm);
+		stats_series_add_value(c->pm_stats.daily[SLAVE_MASTER_DELAY], pm);
+	}
 
 	if (tsproc_update_delay(c->tsproc, &c->path_delay))
 		return;
 
 	c->cur.meanPathDelay = tmv_to_TimeInterval(c->path_delay);
+	if (c->performance_monitoring) {
+		pm = tmv_dbl(c->path_delay);
+		stats_series_add_value(c->pm_stats.qhour[MEAN_PATH_DELAY], pm);
+		stats_series_add_value(c->pm_stats.daily[MEAN_PATH_DELAY], pm);
+	}
 
 	if (c->stats.delay)
 		stats_add_value(c->stats.delay, tmv_dbl(c->path_delay));
@@ -1595,12 +1704,17 @@ int clock_switch_phc(struct clock *c, int phc_index)
 
 enum servo_state clock_synchronize(struct clock *c, tmv_t ingress, tmv_t origin)
 {
-	double adj, weight;
+	double adj, weight, pm;
 	enum servo_state state = SERVO_UNLOCKED;
 
 	c->ingress_ts = ingress;
 
 	tsproc_down_ts(c->tsproc, origin, ingress);
+	if (c->performance_monitoring) {
+		pm = tmv_dbl(tmv_sub(ingress, origin));
+		stats_series_add_value(c->pm_stats.qhour[MASTER_SLAVE_DELAY], pm);
+		stats_series_add_value(c->pm_stats.daily[MASTER_SLAVE_DELAY], pm);
+	}
 
 	if (tsproc_update_offset(c->tsproc, &c->master_offset, &weight)) {
 		if (c->free_running) {
@@ -1615,6 +1729,11 @@ enum servo_state clock_synchronize(struct clock *c, tmv_t ingress, tmv_t origin)
 	}
 
 	c->cur.offsetFromMaster = tmv_to_TimeInterval(c->master_offset);
+	if (c->performance_monitoring) {
+		pm = tmv_dbl(c->master_offset);
+		stats_series_add_value(c->pm_stats.qhour[OFFSET_FROM_MASTER], pm);
+		stats_series_add_value(c->pm_stats.daily[OFFSET_FROM_MASTER], pm);
+	}
 
 	if (c->free_running) {
 		return clock_no_adjust(c, ingress, origin);
