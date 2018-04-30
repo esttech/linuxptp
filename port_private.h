@@ -88,7 +88,6 @@ struct port {
 	unsigned int multiple_pdr_detected;
 	enum port_state (*state_machine)(enum port_state state,
 					 enum fsm_event event, int mdiff);
-	int (*dscmp)(struct dataset *a, struct dataset *b);
 	/* portDS */
 	struct PortIdentity portIdentity;
 	enum port_state     state; /*portState*/
@@ -101,6 +100,7 @@ struct port {
 	int                 announce_span;
 	UInteger8           syncReceiptTimeout;
 	UInteger8           transportSpecific;
+	UInteger8           localPriority;
 	Integer8            logSyncInterval;
 	Enumeration8        delayMechanism;
 	Integer8            logMinPdelayReqInterval;
@@ -108,6 +108,7 @@ struct port {
 	int                 follow_up_info;
 	int                 freq_est_interval;
 	int                 hybrid_e2e;
+	int                 master_only;
 	int                 match_transport_specific;
 	int                 min_neighbor_prop_delay;
 	int                 net_sync_monitor;
