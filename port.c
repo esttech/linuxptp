@@ -77,6 +77,7 @@ static void announce_to_dataset(struct ptp_message *m, struct port *p,
 	out->identity     = a->grandmasterIdentity;
 	out->quality      = a->grandmasterClockQuality;
 	out->priority2    = a->grandmasterPriority2;
+	out->localPriority = p->localPriority;
 	out->stepsRemoved = a->stepsRemoved;
 	out->sender       = m->header.sourcePortIdentity;
 	out->receiver     = p->portIdentity;
@@ -1567,6 +1568,8 @@ int port_initialize(struct port *p)
 	p->transportSpecific       = config_get_int(cfg, p->name, "transportSpecific");
 	p->transportSpecific     <<= 4;
 	p->match_transport_specific = !config_get_int(cfg, p->name, "ignore_transport_specific");
+	p->master_only             = config_get_int(cfg, p->name, "masterOnly");
+	p->localPriority           = config_get_int(cfg, p->name, "G.8275.portDS.localPriority");
 	p->logSyncInterval         = config_get_int(cfg, p->name, "logSyncInterval");
 	p->logMinPdelayReqInterval = config_get_int(cfg, p->name, "logMinPdelayReqInterval");
 	p->neighborPropDelayThresh = config_get_int(cfg, p->name, "neighborPropDelayThresh");
@@ -2191,10 +2194,15 @@ void port_close(struct port *p)
 
 struct foreign_clock *port_compute_best(struct port *p)
 {
+	int (*dscmp)(struct dataset *a, struct dataset *b);
 	struct foreign_clock *fc;
 	struct ptp_message *tmp;
 
+	dscmp = clock_dscmp(p->clock);
 	p->best = NULL;
+
+	if (p->master_only)
+		return p->best;
 
 	LIST_FOREACH(fc, &p->foreign_masters, list) {
 		tmp = TAILQ_FIRST(&fc->messages);
@@ -2210,7 +2218,7 @@ struct foreign_clock *port_compute_best(struct port *p)
 
 		if (!p->best)
 			p->best = fc;
-		else if (p->dscmp(&fc->dataset, &p->best->dataset) > 0)
+		else if (dscmp(&fc->dataset, &p->best->dataset) > 0)
 			p->best = fc;
 		else
 			fc_clear(fc);
@@ -2784,7 +2792,6 @@ struct port *port_open(int phc_index,
 	}
 
 	p->state_machine = clock_slave_only(clock) ? ptp_slave_fsm : ptp_fsm;
-	p->dscmp = dscmp;
 	p->phc_index = phc_index;
 	p->jbod = config_get_int(cfg, interface->name, "boundary_clock_jbod");
 	transport = config_get_int(cfg, interface->name, "network_transport");

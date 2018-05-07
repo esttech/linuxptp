@@ -29,6 +29,11 @@
 #define B_BETTER      -1
 #define B_BETTER_TOPO -2
 
+enum {
+	DS_CMP_IEEE1588,
+	DS_CMP_G8275,
+};
+
 /**
  * BMC state decision algorithm.
  * @param c  The local clock.
@@ -54,5 +59,17 @@ int dscmp(struct dataset *a, struct dataset *b);
  * public use.
  */
 int dscmp2(struct dataset *a, struct dataset *b);
+
+/**
+ * Compare two data sets using the algorithm defined in the Telecom
+ * Profiles according to ITU-T G.8275.1 and G.8275.2.
+ *
+ * @param a A dataset to compare.
+ * @param b A dataset to compare.
+ * @return An integer less than, equal to, or greater than zero
+ *         if the dataset @a a is found, respectively, to be
+ *         less than, to match, or be greater than @a b.
+ */
+int telecom_dscmp(struct dataset *a, struct dataset *b);
 
 #endif
