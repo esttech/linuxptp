@@ -282,6 +282,7 @@ void clock_destroy(struct clock *c)
 	}
 	memset(c, 0, sizeof(*c));
 	msg_cleanup();
+	tc_cleanup();
 }
 
 static int clock_fault_timeout(struct port *port, int set)
@@ -873,10 +874,10 @@ struct clock *clock_create(enum clock_type type, struct config *config,
 	switch (type) {
 	case CLOCK_TYPE_ORDINARY:
 	case CLOCK_TYPE_BOUNDARY:
-		c->type = type;
-		break;
 	case CLOCK_TYPE_P2P:
 	case CLOCK_TYPE_E2E:
+		c->type = type;
+		break;
 	case CLOCK_TYPE_MANAGEMENT:
 		return NULL;
 	}
@@ -1185,6 +1186,11 @@ void clock_follow_up_info(struct clock *c, struct follow_up_info_tlv *f)
 	c->status.gmTimeBaseIndicator = f->gmTimeBaseIndicator;
 	memcpy(&c->status.lastGmPhaseChange, &f->lastGmPhaseChange,
 	       sizeof(c->status.lastGmPhaseChange));
+}
+
+int clock_free_running(struct clock *c)
+{
+	return c->free_running ? 1 : 0;
 }
 
 int clock_gm_capable(struct clock *c)
