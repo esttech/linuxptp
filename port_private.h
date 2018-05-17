@@ -50,6 +50,13 @@ struct nrate_estimator {
 	int ratio_valid;
 };
 
+struct tc_txd {
+	TAILQ_ENTRY(tc_txd) list;
+	struct ptp_message *msg;
+	tmv_t residence;
+	int ingress_port;
+};
+
 struct port {
 	LIST_ENTRY(port) list;
 	char *name;
@@ -113,6 +120,7 @@ struct port {
 	int                 min_neighbor_prop_delay;
 	int                 net_sync_monitor;
 	int                 path_trace_enabled;
+	int                 tc_spanning_tree;
 	Integer64           rx_timestamp_offset;
 	Integer64           tx_timestamp_offset;
 	enum link_state     link_status;
@@ -121,12 +129,23 @@ struct port {
 	unsigned int        versionNumber; /*UInteger4*/
 	/* foreignMasterDS */
 	LIST_HEAD(fm, foreign_clock) foreign_masters;
+	/* TC book keeping */
+	TAILQ_HEAD(tct, tc_txd) tc_transmitted;
 };
 
 #define portnum(p) (p->portIdentity.portNumber)
 
+void e2e_dispatch(struct port *p, enum fsm_event event, int mdiff);
+enum fsm_event e2e_event(struct port *p, int fd_index);
+
+void p2p_dispatch(struct port *p, enum fsm_event event, int mdiff);
+enum fsm_event p2p_event(struct port *p, int fd_index);
+
 int clear_fault_asap(struct fault_interval *faint);
+void delay_req_prune(struct port *p);
 void fc_clear(struct foreign_clock *fc);
+void flush_delay_req(struct port *p);
+void flush_last_sync(struct port *p);
 int port_clr_tmo(int fd);
 int port_delay_request(struct port *p);
 void port_disable(struct port *p);
@@ -135,9 +154,11 @@ int port_is_enabled(struct port *p);
 void port_link_status(void *ctx, int index, int linkup);
 int port_set_announce_tmo(struct port *p);
 int port_set_delay_tmo(struct port *p);
+int port_set_qualification_tmo(struct port *p);
 void port_show_transition(struct port *p, enum port_state next,
 			  enum fsm_event event);
 int process_announce(struct port *p, struct ptp_message *m);
+void process_delay_resp(struct port *p, struct ptp_message *m);
 void process_follow_up(struct port *p, struct ptp_message *m);
 int process_pdelay_req(struct port *p, struct ptp_message *m);
 int process_pdelay_resp(struct port *p, struct ptp_message *m);

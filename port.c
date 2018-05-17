@@ -36,6 +36,7 @@
 #include "print.h"
 #include "rtnl.h"
 #include "sk.h"
+#include "tc.h"
 #include "tlv.h"
 #include "tmv.h"
 #include "tsproc.h"
@@ -51,7 +52,6 @@ enum syfu_event {
 	FUP_MATCH,
 };
 
-static void flush_delay_req(struct port *p);
 static int port_capable(struct port *p);
 static int port_is_ieee8021as(struct port *p);
 static void port_nrate_initialize(struct port *p);
@@ -297,7 +297,7 @@ static int delay_req_current(struct ptp_message *m, struct timespec now)
 	return t2 - t1 < tmo;
 }
 
-static void delay_req_prune(struct port *p)
+void delay_req_prune(struct port *p)
 {
 	struct timespec now;
 	struct ptp_message *m;
@@ -1048,7 +1048,7 @@ static int port_set_manno_tmo(struct port *p)
 	return set_tmo_log(p->fda.fd[FD_MANNO_TIMER], 1, p->logAnnounceInterval);
 }
 
-static int port_set_qualification_tmo(struct port *p)
+int port_set_qualification_tmo(struct port *p)
 {
 	return set_tmo_log(p->fda.fd[FD_QUALIFICATION_TIMER],
 		       1+clock_steps_removed(p->clock), p->logAnnounceInterval);
@@ -1490,7 +1490,7 @@ int port_is_enabled(struct port *p)
 	return 1;
 }
 
-static void flush_last_sync(struct port *p)
+void flush_last_sync(struct port *p)
 {
 	if (p->syfu != SF_EMPTY) {
 		msg_put(p->last_syncfup);
@@ -1498,7 +1498,7 @@ static void flush_last_sync(struct port *p)
 	}
 }
 
-static void flush_delay_req(struct port *p)
+void flush_delay_req(struct port *p)
 {
 	struct ptp_message *m;
 	while ((m = TAILQ_FIRST(&p->delay_req)) != NULL) {
@@ -1535,6 +1535,7 @@ void port_disable(struct port *p)
 {
 	int i;
 
+	tc_flush(p);
 	flush_last_sync(p);
 	flush_delay_req(p);
 	flush_peer_delay(p);
@@ -1544,7 +1545,7 @@ void port_disable(struct port *p)
 	transport_close(p->trp, &p->fda);
 
 	for (i = 0; i < N_TIMER_FDS; i++) {
-		close(p->fda.fd[FD_ANNOUNCE_TIMER + i]);
+		close(p->fda.fd[FD_FIRST_TIMER + i]);
 	}
 
 	/* Keep rtnl socket to get link status info. */
@@ -1589,7 +1590,7 @@ int port_initialize(struct port *p)
 		goto no_tropen;
 
 	for (i = 0; i < N_TIMER_FDS; i++) {
-		p->fda.fd[FD_ANNOUNCE_TIMER + i] = fd[i];
+		p->fda.fd[FD_FIRST_TIMER + i] = fd[i];
 	}
 
 	if (port_set_announce_tmo(p))
@@ -1627,7 +1628,7 @@ static int port_renew_transport(struct port *p)
 		return 0;
 	}
 	transport_close(p->trp, &p->fda);
-	port_clear_fda(p, FD_ANNOUNCE_TIMER);
+	port_clear_fda(p, FD_FIRST_TIMER);
 	res = transport_open(p->trp, p->iface, &p->fda, p->timestamping);
 	/* Need to call clock_fda_changed even if transport_open failed in
 	 * order to update clock to the now closed descriptors. */
@@ -1777,7 +1778,7 @@ out:
 	return err;
 }
 
-static void process_delay_resp(struct port *p, struct ptp_message *m)
+void process_delay_resp(struct port *p, struct ptp_message *m)
 {
 	struct delay_resp_msg *rsp = &m->delay_resp;
 	struct PortIdentity master;
@@ -2778,6 +2779,7 @@ struct port *port_open(int phc_index,
 	}
 
 	memset(p, 0, sizeof(*p));
+	TAILQ_INIT(&p->tc_transmitted);
 
 	switch (type) {
 	case CLOCK_TYPE_ORDINARY:
@@ -2786,7 +2788,13 @@ struct port *port_open(int phc_index,
 		p->event = bc_event;
 		break;
 	case CLOCK_TYPE_P2P:
+		p->dispatch = p2p_dispatch;
+		p->event = p2p_event;
+		break;
 	case CLOCK_TYPE_E2E:
+		p->dispatch = e2e_dispatch;
+		p->event = e2e_event;
+		break;
 	case CLOCK_TYPE_MANAGEMENT:
 		return NULL;
 	}
@@ -2822,6 +2830,7 @@ struct port *port_open(int phc_index,
 	p->hybrid_e2e = config_get_int(cfg, p->name, "hybrid_e2e");
 	p->net_sync_monitor = config_get_int(cfg, p->name, "net_sync_monitor");
 	p->path_trace_enabled = config_get_int(cfg, p->name, "path_trace_enabled");
+	p->tc_spanning_tree = config_get_int(cfg, p->name, "tc_spanning_tree");
 	p->rx_timestamp_offset = config_get_int(cfg, p->name, "ingressLatency");
 	p->rx_timestamp_offset <<= 16;
 	p->tx_timestamp_offset = config_get_int(cfg, p->name, "egressLatency");
@@ -2839,6 +2848,14 @@ struct port *port_open(int phc_index,
 	p->delayMechanism = config_get_int(cfg, p->name, "delay_mechanism");
 	p->versionNumber = PTP_VERSION;
 
+	if (number && type == CLOCK_TYPE_P2P && p->delayMechanism != DM_P2P) {
+		pr_err("port %d: P2P TC needs P2P ports", number);
+		goto err_port;
+	}
+	if (number && type == CLOCK_TYPE_E2E && p->delayMechanism != DM_E2E) {
+		pr_err("port %d: E2E TC needs E2E ports", number);
+		goto err_port;
+	}
 	if (p->hybrid_e2e && p->delayMechanism != DM_E2E) {
 		pr_warning("port %d: hybrid_e2e only works with E2E", number);
 	}

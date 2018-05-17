@@ -24,6 +24,7 @@
 #include <string.h>
 
 #include "bmc.h"
+#include "clock.h"
 #include "config.h"
 #include "ether.h"
 #include "hash.h"
@@ -135,6 +136,14 @@ static struct config_enum clock_servo_enu[] = {
 	{ NULL, 0 },
 };
 
+static struct config_enum clock_type_enu[] = {
+	{ "OC",      CLOCK_TYPE_ORDINARY },
+	{ "BC",      CLOCK_TYPE_BOUNDARY },
+	{ "P2P_TC",  CLOCK_TYPE_P2P      },
+	{ "E2E_TC",  CLOCK_TYPE_E2E      },
+	{ NULL, 0 },
+};
+
 static struct config_enum dataset_comp_enu[] = {
 	{ "ieee1588", DS_CMP_IEEE1588 },
 	{ "G.8275.x", DS_CMP_G8275    },
@@ -186,6 +195,7 @@ struct config_item config_tab[] = {
 	GLOB_ITEM_INT("clockAccuracy", 0xfe, 0, UINT8_MAX),
 	GLOB_ITEM_INT("clockClass", 248, 0, UINT8_MAX),
 	GLOB_ITEM_ENU("clock_servo", CLOCK_SERVO_PI, clock_servo_enu),
+	GLOB_ITEM_ENU("clock_type", CLOCK_TYPE_ORDINARY, clock_type_enu),
 	GLOB_ITEM_ENU("dataset_comparison", DS_CMP_IEEE1588, dataset_comp_enu),
 	PORT_ITEM_INT("delayAsymmetry", 0, INT_MIN, INT_MAX),
 	PORT_ITEM_ENU("delay_filter", FILTER_MOVING_MEDIAN, delay_filter_enu),
@@ -244,6 +254,7 @@ struct config_item config_tab[] = {
 	GLOB_ITEM_DBL("step_threshold", 0.0, 0.0, DBL_MAX),
 	GLOB_ITEM_INT("summary_interval", 0, INT_MIN, INT_MAX),
 	PORT_ITEM_INT("syncReceiptTimeout", 0, 0, UINT8_MAX),
+	GLOB_ITEM_INT("tc_spanning_tree", 0, 1, 1),
 	GLOB_ITEM_INT("timeSource", INTERNAL_OSCILLATOR, 0x10, 0xfe),
 	GLOB_ITEM_ENU("time_stamping", TS_HARDWARE, timestamping_enu),
 	PORT_ITEM_INT("transportSpecific", 0, 0, 0x0F),
