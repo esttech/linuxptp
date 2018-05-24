@@ -19,7 +19,8 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
 #
-# Look for functional prototypes in the C library.
+# Look for functional prototypes in the C library
+# Look for libsnmp presence.
 #
 user_flags()
 {
@@ -50,6 +51,19 @@ user_flags()
 			fi
 		done
 	done
+
+	# Look for libsnmp presence
+	if test -z ${CROSS_COMPILE}; then
+		for d in $dirs; do
+			files=$(find $d -type f -name net-snmp-agent-includes.h)
+			for f in $files; do
+				if grep -q NET_SNMP_AGENT_INCLUDES_H $f; then
+					printf " -I. `net-snmp-config --cflags`"
+					break 2
+				fi
+			done
+		done
+	fi
 }
 
 #
