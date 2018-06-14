@@ -32,7 +32,7 @@ user_files()
 			files=$(find $d -type f -name net-snmp-agent-includes.h)
 			for f in $files; do
 				if grep -q NET_SNMP_AGENT_INCLUDES_H $f; then
-					printf " snmpd snmpd.o"
+					printf " snmpd snmpd.o ptpbase_mib.o"
 					break 2
 				fi
 			done

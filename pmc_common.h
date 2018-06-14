@@ -40,6 +40,8 @@ struct pmc *pmc_create(struct config *cfg, enum transport_type transport_type,
 
 void pmc_destroy(struct pmc *pmc);
 
+UInteger8 pmc_get_domain_number(struct pmc *pmc);
+
 int pmc_get_transport_fd(struct pmc *pmc);
 
 int pmc_send_get_action(struct pmc *pmc, int id);

@@ -52,7 +52,7 @@ ptp4l: $(OBJ)
 nsm: config.o filter.o hash.o mave.o mmedian.o msg.o nsm.o print.o raw.o \
  rtnl.o sk.o transport.o tlv.o tsproc.o udp.o udp6.o uds.o util.o version.o
 
-snmpd: config.o hash.o msg.o pmc_common.o print.o raw.o sk.o \
+snmpd: config.o hash.o msg.o pmc_common.o print.o ptpbase_mib.o raw.o sk.o \
  snmpd.o tlv.o transport.o udp.o udp6.o uds.o util.o
 
 pmc: config.o hash.o msg.o pmc.o pmc_common.o print.o raw.o sk.o tlv.o \

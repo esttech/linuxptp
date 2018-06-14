@@ -26,5 +26,9 @@
  * function declarations 
  */
 struct ptp_message* snmpd_run_pmc(char *cmd);
+uint8_t snmpd_get_domain();
+
+int init_ptpbase_mib();
+void free_ptpbase_mib();
 
 #endif /* SNMPDMIB_H */

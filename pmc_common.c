@@ -479,6 +479,11 @@ static int pmc_tlv_datalen(struct pmc *pmc, int id)
 	return len;
 }
 
+UInteger8 pmc_get_domain_number(struct pmc *pmc)
+{
+	return pmc->domain_number;
+}
+
 int pmc_get_transport_fd(struct pmc *pmc)
 {
 	return pmc->fdarray.fd[FD_GENERAL];

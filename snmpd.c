@@ -31,6 +31,7 @@
 #include "util.h"
 
 #define SNMP_NFD 1
+
 static struct pmc *pmc;
 
 struct ptp_message* snmpd_run_pmc(char *cmd)
@@ -65,6 +66,11 @@ struct ptp_message* snmpd_run_pmc(char *cmd)
 	return NULL;
 }
 
+uint8_t snmpd_get_domain()
+{
+	return pmc_get_domain_number(pmc);
+}
+
 static int open_pmc(struct config *cfg)
 {
 	char uds_local[MAX_IFNAME_SIZE + 1];
@@ -84,6 +90,10 @@ static int open_snmp()
 	netsnmp_ds_set_boolean(NETSNMP_DS_APPLICATION_ID,
 			       NETSNMP_DS_AGENT_ROLE, 1);
 	init_agent("linuxptpAgent");
+
+	if (init_ptpbase_mib()) {
+		return -1;
+	}
 
 	init_snmp("linuxptpAgent");
 
@@ -180,6 +190,7 @@ int main(int argc, char *argv[])
 		agent_check_and_process(1);
 	}
 
+	free_ptpbase_mib();
 	snmp_shutdown("linuxptpAgent");
 
 snmp_out:
